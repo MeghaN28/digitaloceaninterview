@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models import schemas
 from app.repositories.local_repository import LocalImageRepository
 from app.services.thumbnail_service import ThumbnailService, PRESETS
+from app.services.upload_validation import UploadValidationError, validate_upload
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,23 @@ def get_thumb_service(repo=Depends(get_repo)):
 
 @router.post("/images", response_model=schemas.UploadImagesResponse)
 async def upload_images(files: List[UploadFile] = File(...), repo: LocalImageRepository = Depends(get_repo)):
+    if not files:
+        raise HTTPException(status_code=400, detail="at least one file is required")
+
     images = []
     for upload in files:
-        if upload.content_type not in settings.ALLOWED_CONTENT_TYPES:
-            raise HTTPException(status_code=400, detail=f"unsupported content type {upload.content_type}")
+        content = await upload.read()
+
+        try:
+            validate_upload(
+                upload.filename,
+                upload.content_type,
+                content,
+                settings.ALLOWED_CONTENT_TYPES,
+                settings.MAX_UPLOAD_SIZE_BYTES,
+            )
+        except UploadValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
         image_id = uuid4().hex
         filename = f"{image_id}"
@@ -37,16 +51,20 @@ async def upload_images(files: List[UploadFile] = File(...), repo: LocalImageRep
 
         Path(storage_dir).mkdir(parents=True, exist_ok=True)
         path = Path(storage_dir) / filename
-        content = await upload.read()
         with open(path, "wb") as f:
             f.write(content)
 
         # read image to get dimensions
-        from PIL import Image
+        from PIL import Image, UnidentifiedImageError
         import io
 
-        img = Image.open(io.BytesIO(content))
-        width, height = img.size
+        try:
+            img = Image.open(io.BytesIO(content))
+            width, height = img.size
+        except UnidentifiedImageError:
+            path.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail="file could not be read as an image")
+
         size_bytes = len(content)
         created_at = datetime.utcnow().isoformat() + "Z"
 
