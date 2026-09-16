@@ -7,6 +7,7 @@ from pymongo.database import Database
 from pymongo.errors import PyMongoError
 
 from app.core.config import settings
+from app.core.metrics import db_metrics, timed
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,8 @@ class MongoDB:
         if self.client is None:
             return False
         try:
-            self.client.admin.command("ping")
+            with timed(db_metrics, "mongodb.ping"):
+                self.client.admin.command("ping")
             return True
         except PyMongoError:
             logger.exception("MongoDB ping failed")

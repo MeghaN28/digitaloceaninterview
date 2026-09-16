@@ -3,6 +3,8 @@ import threading
 from typing import Optional
 from pathlib import Path
 
+from app.core.metrics import db_metrics, timed
+
 from .base import ImageRecord, ImageRepository
 
 
@@ -41,24 +43,29 @@ class LocalImageRepository:
             json.dump(data, f, indent=2)
 
     def save_image(self, image_id: str, filename: str, content_type: str, width: int, height: int, size_bytes: int, created_at: str) -> None:
-        with self._lock:
-            db = self._read_db_locked()
-            db[image_id] = {
-                "image_id": image_id,
-                "original_filename": filename,
-                "content_type": content_type,
-                "width": width,
-                "height": height,
-                "size_bytes": size_bytes,
-                "created_at": created_at,
-                "thumbnails": [],
-            }
-            self._write_db_locked(db)
+        # timed() wraps the lock acquisition too, on purpose - time spent
+        # waiting for the lock under concurrent load IS the latency we want
+        # to see here, not just the file I/O once we have it.
+        with timed(db_metrics, "local_repo.save_image"):
+            with self._lock:
+                db = self._read_db_locked()
+                db[image_id] = {
+                    "image_id": image_id,
+                    "original_filename": filename,
+                    "content_type": content_type,
+                    "width": width,
+                    "height": height,
+                    "size_bytes": size_bytes,
+                    "created_at": created_at,
+                    "thumbnails": [],
+                }
+                self._write_db_locked(db)
 
     def get_image(self, image_id: str) -> Optional[ImageRecord]:
-        with self._lock:
-            db = self._read_db_locked()
-        return db.get(image_id)
+        with timed(db_metrics, "local_repo.get_image"):
+            with self._lock:
+                db = self._read_db_locked()
+            return db.get(image_id)
 
     def add_thumbnail(self, image_id: str, thumbnail_record: dict) -> None:
         # Checked and appended inside the same locked section as the
@@ -66,19 +73,20 @@ class LocalImageRepository:
         # concurrent requests for the same (image_id, preset) can't both
         # pass the check and both append - the same class of race already
         # fixed for save_image/get_image above.
-        with self._lock:
-            db = self._read_db_locked()
-            rec = db.get(image_id)
-            if not rec:
-                raise KeyError("image not found")
-            rec.setdefault("thumbnails", [])
+        with timed(db_metrics, "local_repo.add_thumbnail"):
+            with self._lock:
+                db = self._read_db_locked()
+                rec = db.get(image_id)
+                if not rec:
+                    raise KeyError("image not found")
+                rec.setdefault("thumbnails", [])
 
-            preset = thumbnail_record.get("preset")
-            if preset is not None and any(t.get("preset") == preset for t in rec["thumbnails"]):
-                raise DuplicateThumbnailError(
-                    f"a '{preset}' thumbnail already exists for image {image_id}"
-                )
+                preset = thumbnail_record.get("preset")
+                if preset is not None and any(t.get("preset") == preset for t in rec["thumbnails"]):
+                    raise DuplicateThumbnailError(
+                        f"a '{preset}' thumbnail already exists for image {image_id}"
+                    )
 
-            rec["thumbnails"].append(thumbnail_record)
-            db[image_id] = rec
-            self._write_db_locked(db)
+                rec["thumbnails"].append(thumbnail_record)
+                db[image_id] = rec
+                self._write_db_locked(db)

@@ -1,6 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
+from app.core.metrics import db_metrics, timed
 from app.database.mongodb import mongodb
 
 
@@ -30,8 +31,10 @@ class MongoImageRepository:
             "size_bytes": size_bytes,
             "created_at": created_at or datetime.utcnow().isoformat() + "Z",
         }
-        mongodb.images.insert_one(dict(doc))
+        with timed(db_metrics, "mongo_repo.create_image"):
+            mongodb.images.insert_one(dict(doc))
         return doc
 
     def find_image(self, image_id: str) -> Optional[dict]:
-        return mongodb.images.find_one({"image_id": image_id}, {"_id": 0})
+        with timed(db_metrics, "mongo_repo.find_image"):
+            return mongodb.images.find_one({"image_id": image_id}, {"_id": 0})

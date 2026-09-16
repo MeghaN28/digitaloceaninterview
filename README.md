@@ -157,13 +157,54 @@ Rate limiting is a simple in-memory, per-process, per-client-IP fixed window
 instance enforces its own limit independently. `/healthz` and `/readyz` are
 exempt so orchestrator health checks are never throttled.
 
-## Logging
+## Logging & metrics
 
 `app/main.py` has an HTTP middleware that logs every request as
 `METHOD PATH -> STATUS (duration_ms)`, at `INFO` for 2xx/3xx, `WARNING` for
 4xx, and `ERROR` for 5xx. This covers all the error responses above without
 needing a handler-by-handler log call. Uvicorn's own access log runs
 alongside it.
+
+The same middleware records latency into an in-memory metrics registry
+(`app/core/metrics.py`), segregated two ways:
+
+- **`http`**: keyed by `METHOD route-template` (e.g. `POST /v1/images`,
+  `GET /v1/images/{image_id}`) — a route template, not the raw URL, so
+  metrics group by endpoint instead of fragmenting into one bucket per
+  `image_id`.
+- **`db`**: keyed by storage operation (`local_repo.save_image`,
+  `local_repo.get_image`, `local_repo.add_thumbnail`,
+  `mongo_repo.create_image`, `mongo_repo.find_image`, `mongodb.ping`) - this
+  is how the concurrency ceiling above was diagnosed: if `db` latency is low
+  but `http` latency for the same request is high, the time is going into
+  Pillow image processing, not storage/locking.
+
+Each bucket reports `count`, `errors`, `p50_ms`, `p95_ms`, `p99_ms`, `max_ms`.
+Check it with:
+
+```bash
+curl localhost:8000/metrics | python -m json.tool
+```
+
+This is plain JSON, not Prometheus exposition format, and it's per-process
+(resets on restart, not shared across instances) - enough to answer "where is
+the latency going" right now; swap for `prometheus-client`/OpenTelemetry if
+this needs to feed a real dashboard or survive restarts.
+
+## Streamlit UI
+
+A minimal UI (`streamlit_app.py`) for uploading an image and creating
+thumbnails without curl/Postman - point it at either your local server or the
+deployed app.
+
+```bash
+pip install -r requirements-streamlit.txt
+streamlit run streamlit_app.py
+```
+
+Then enter the API base URL at the top of the page (e.g.
+`http://localhost:8000` or your DigitalOcean App Platform URL) and use the
+upload / thumbnail / metadata sections.
 
 ## Docker
 
