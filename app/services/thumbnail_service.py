@@ -9,7 +9,7 @@ from uuid import uuid4
 from PIL import Image
 
 from app.core.config import settings
-from app.repositories.local_repository import DuplicateThumbnailError
+from app.repositories.exceptions import DuplicateThumbnailError
 
 logger = logging.getLogger(__name__)
 

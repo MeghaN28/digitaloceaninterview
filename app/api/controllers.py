@@ -7,7 +7,8 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.models import schemas
-from app.repositories.local_repository import DuplicateThumbnailError, LocalImageRepository
+from app.repositories.exceptions import DuplicateThumbnailError
+from app.repositories.mongo_image_repository import MongoImageRepository
 from app.services.thumbnail_service import ThumbnailService, PRESETS
 from app.services.upload_validation import (
     UnsupportedMediaTypeError,
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/v1")
 
 
 def get_repo():
-    return LocalImageRepository(settings.DB_FILE)
+    return MongoImageRepository()
 
 
 def get_thumb_service(repo=Depends(get_repo)):
@@ -30,7 +31,7 @@ def get_thumb_service(repo=Depends(get_repo)):
 
 
 @router.post("/images", response_model=schemas.UploadImagesResponse)
-async def upload_images(files: List[UploadFile] = File(...), repo: LocalImageRepository = Depends(get_repo)):
+async def upload_images(files: List[UploadFile] = File(...), repo: MongoImageRepository = Depends(get_repo)):
     if not files:
         raise HTTPException(status_code=400, detail="at least one file is required")
 
@@ -108,7 +109,7 @@ def create_thumbnail(image_id: str, payload: schemas.CreateThumbnailRequest, ser
 
 
 @router.get("/images/{image_id}", response_model=schemas.ImageMetadata)
-def get_image_metadata(image_id: str, repo: LocalImageRepository = Depends(get_repo)):
+def get_image_metadata(image_id: str, repo: MongoImageRepository = Depends(get_repo)):
     rec = repo.get_image(image_id)
     if not rec:
         raise HTTPException(status_code=404, detail="image not found")
@@ -116,7 +117,7 @@ def get_image_metadata(image_id: str, repo: LocalImageRepository = Depends(get_r
 
 
 @router.get("/images/{image_id}/thumbnails/{thumbnail_id}")
-def get_thumbnail_file(image_id: str, thumbnail_id: str, repo: LocalImageRepository = Depends(get_repo)):
+def get_thumbnail_file(image_id: str, thumbnail_id: str, repo: MongoImageRepository = Depends(get_repo)):
     rec = repo.get_image(image_id)
     if not rec:
         raise HTTPException(status_code=404, detail="image not found")

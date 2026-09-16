@@ -6,10 +6,9 @@ from pathlib import Path
 from app.core.metrics import db_metrics, timed
 
 from .base import ImageRecord, ImageRepository
+from .exceptions import DuplicateThumbnailError
 
-
-class DuplicateThumbnailError(Exception):
-    """Raised when a preset thumbnail already exists for an image. -> HTTP 409"""
+__all__ = ["DuplicateThumbnailError", "LocalImageRepository"]
 
 
 class LocalImageRepository:

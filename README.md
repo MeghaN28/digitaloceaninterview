@@ -61,6 +61,28 @@ shutdown -> mongodb.close()
     max_height)`), add a separate partial unique index for that case rather
     than overloading this one.
 
+### What's actually stored where
+
+`MongoImageRepository` ([app/repositories/mongo_image_repository.py](app/repositories/mongo_image_repository.py))
+backs the live API - `POST /v1/images` writes to `images`, thumbnail
+creation writes to `thumbnails`, and `GET /v1/images/{id}` composes the
+nested `thumbnails` list by querying the `thumbnails` collection for that
+`image_id`. **Image/thumbnail bytes themselves are still local disk files**
+(`STORAGE_DIR`/`THUMBNAILS_DIR`) - only metadata moved to Mongo; moving the
+actual files to object storage (DigitalOcean Spaces) is separate, later work
+and is what the `storage_key` field is reserved for.
+
+Duplicate-preset detection (409) uses the same pre-check + insert pattern
+as before, but the *authoritative* guard is now the real unique partial
+index in Mongo (`insert_one` raising `DuplicateKeyError`) rather than an
+in-process lock - Mongo enforces the constraint atomically across however
+many app instances are running, which a local file lock never could.
+
+`LocalImageRepository` ([app/repositories/local_repository.py](app/repositories/local_repository.py))
+is no longer used by the live request path - kept around because its test
+(`tests/test_local_repository_concurrency.py`) is a concrete demonstration
+of the file-corruption bug found and fixed earlier in this project.
+
 ### /healthz vs /readyz
 
 - `/healthz` — liveness. Answers "is the process up and responding at all?"
@@ -112,6 +134,15 @@ db.close()
   ```
 
 ## Concurrency
+
+**Note:** the load-test numbers below were measured against the app when it
+was still backed by `LocalImageRepository` (before the Mongo migration in
+"What's actually stored where" above). The lock-based correctness guarantee
+they describe now lives in that module for reference only; the live app's
+correctness guarantee is Mongo's unique partial index instead. The capacity
+ceiling itself (small instance + synchronous Pillow work) is unrelated to
+which repository backs metadata and should still apply - re-run the same
+load test against the current Mongo-backed path if that needs re-confirming.
 
 `LocalImageRepository` uses a single process-wide lock guarding the entire
 read-modify-write cycle of every operation, so concurrent requests can't
