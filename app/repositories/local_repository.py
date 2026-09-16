@@ -1,54 +1,68 @@
 import json
 import threading
 from typing import Optional
-from datetime import datetime
 from pathlib import Path
 
 from .base import ImageRecord, ImageRepository
 
 
 class LocalImageRepository:
+    """JSON-file-backed repository.
+
+    A single process-wide lock guards the entire read-modify-write cycle of
+    every operation (not just the individual file read or write), so
+    concurrent requests can't interleave and corrupt the file or silently
+    drop each other's updates. The lock is a class attribute - not set in
+    __init__ - because controllers.py builds a fresh LocalImageRepository
+    per request (see get_repo); an instance-level lock would give every
+    request its own lock and provide no real mutual exclusion at all.
+    """
+
+    _lock = threading.Lock()
+
     def __init__(self, db_file: str):
         self.db_file = Path(db_file)
         self.db_file.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
         if not self.db_file.exists():
-            self._write_db({})
+            with self._lock:
+                if not self.db_file.exists():
+                    self._write_db_locked({})
 
-    def _read_db(self):
-        with self._lock:
-            with self.db_file.open("r", encoding="utf-8") as f:
-                return json.load(f)
+    def _read_db_locked(self):
+        with self.db_file.open("r", encoding="utf-8") as f:
+            return json.load(f)
 
-    def _write_db(self, data):
-        with self._lock:
-            with self.db_file.open("w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+    def _write_db_locked(self, data):
+        with self.db_file.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
 
     def save_image(self, image_id: str, filename: str, content_type: str, width: int, height: int, size_bytes: int, created_at: str) -> None:
-        db = self._read_db()
-        db[image_id] = {
-            "image_id": image_id,
-            "original_filename": filename,
-            "content_type": content_type,
-            "width": width,
-            "height": height,
-            "size_bytes": size_bytes,
-            "created_at": created_at,
-            "thumbnails": [],
-        }
-        self._write_db(db)
+        with self._lock:
+            db = self._read_db_locked()
+            db[image_id] = {
+                "image_id": image_id,
+                "original_filename": filename,
+                "content_type": content_type,
+                "width": width,
+                "height": height,
+                "size_bytes": size_bytes,
+                "created_at": created_at,
+                "thumbnails": [],
+            }
+            self._write_db_locked(db)
 
     def get_image(self, image_id: str) -> Optional[ImageRecord]:
-        db = self._read_db()
+        with self._lock:
+            db = self._read_db_locked()
         return db.get(image_id)
 
     def add_thumbnail(self, image_id: str, thumbnail_record: dict) -> None:
-        db = self._read_db()
-        rec = db.get(image_id)
-        if not rec:
-            raise KeyError("image not found")
-        rec.setdefault("thumbnails", [])
-        rec["thumbnails"].append(thumbnail_record)
-        db[image_id] = rec
-        self._write_db(db)
+        with self._lock:
+            db = self._read_db_locked()
+            rec = db.get(image_id)
+            if not rec:
+                raise KeyError("image not found")
+            rec.setdefault("thumbnails", [])
+            rec["thumbnails"].append(thumbnail_record)
+            db[image_id] = rec
+            self._write_db_locked(db)
