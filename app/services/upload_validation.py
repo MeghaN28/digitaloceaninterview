@@ -12,7 +12,15 @@ _SIGNATURES = {
 
 
 class UploadValidationError(ValueError):
-    pass
+    """Malformed request: bad/missing filename, empty content. -> HTTP 400"""
+
+
+class UploadTooLargeError(UploadValidationError):
+    """File exceeds the configured size limit. -> HTTP 413"""
+
+
+class UnsupportedMediaTypeError(UploadValidationError):
+    """Content type not allowed, or doesn't match the file's actual bytes. -> HTTP 415"""
 
 
 def _detect_content_type(content: bytes) -> Optional[str]:
@@ -48,17 +56,17 @@ def validate_upload(
         raise UploadValidationError("uploaded file is empty")
 
     if len(content) > max_size_bytes:
-        raise UploadValidationError(
+        raise UploadTooLargeError(
             f"file exceeds maximum allowed size of {max_size_bytes} bytes"
         )
 
     if not content_type or content_type not in allowed_content_types:
-        raise UploadValidationError(f"unsupported content type '{content_type}'")
+        raise UnsupportedMediaTypeError(f"unsupported content type '{content_type}'")
 
     detected_content_type = _detect_content_type(content)
     if detected_content_type is None:
-        raise UploadValidationError("file content is not a recognized image format")
+        raise UnsupportedMediaTypeError("file content is not a recognized image format")
     if detected_content_type != content_type:
-        raise UploadValidationError(
+        raise UnsupportedMediaTypeError(
             f"file content does not match declared content type '{content_type}'"
         )

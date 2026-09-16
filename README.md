@@ -111,6 +111,38 @@ db.close()
   MONGODB_URI="..." MONGODB_DATABASE="image_thumbnail_db" pytest -m integration
   ```
 
+## Error responses
+
+| Status | When | Source |
+| --- | --- | --- |
+| 400 | Missing/invalid filename, empty file body, no files in the request | upload validation |
+| 404 | Unknown `image_id` / `thumbnail_id` | not found |
+| 409 | A preset thumbnail (`small`/`medium`/`large`) already exists for that image | duplicate-thumbnail check |
+| 413 | Uploaded file exceeds `MAX_UPLOAD_SIZE_BYTES` (default 10 MB) | upload validation |
+| 415 | Content-Type not in the allow-list, or the file's actual bytes don't match its declared Content-Type | upload validation (magic-byte check) |
+| 429 | Client exceeded `RATE_LIMIT_MAX_REQUESTS` per `RATE_LIMIT_WINDOW_SECONDS` | rate limiter |
+| 503 | MongoDB unreachable | `/readyz` |
+
+Duplicate detection only applies to preset thumbnails — custom-dimension
+thumbnails (`max_width`/`max_height`) aren't deduped, matching the partial
+unique index described above. The check is done atomically inside the
+repository's locked read-modify-write (not as a separate pre-check + write),
+so two concurrent requests for the same `(image_id, preset)` can't both
+succeed.
+
+Rate limiting is a simple in-memory, per-process, per-client-IP fixed window
+(`app/core/rate_limit.py`) — there's no shared store (no Redis), so each app
+instance enforces its own limit independently. `/healthz` and `/readyz` are
+exempt so orchestrator health checks are never throttled.
+
+## Logging
+
+`app/main.py` has an HTTP middleware that logs every request as
+`METHOD PATH -> STATUS (duration_ms)`, at `INFO` for 2xx/3xx, `WARNING` for
+4xx, and `ERROR` for 5xx. This covers all the error responses above without
+needing a handler-by-handler log call. Uvicorn's own access log runs
+alongside it.
+
 ## Docker
 
 ```bash

@@ -7,9 +7,14 @@ from uuid import uuid4
 
 from app.core.config import settings
 from app.models import schemas
-from app.repositories.local_repository import LocalImageRepository
+from app.repositories.local_repository import DuplicateThumbnailError, LocalImageRepository
 from app.services.thumbnail_service import ThumbnailService, PRESETS
-from app.services.upload_validation import UploadValidationError, validate_upload
+from app.services.upload_validation import (
+    UnsupportedMediaTypeError,
+    UploadTooLargeError,
+    UploadValidationError,
+    validate_upload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,10 @@ async def upload_images(files: List[UploadFile] = File(...), repo: LocalImageRep
                 settings.ALLOWED_CONTENT_TYPES,
                 settings.MAX_UPLOAD_SIZE_BYTES,
             )
+        except UploadTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=str(exc))
+        except UnsupportedMediaTypeError as exc:
+            raise HTTPException(status_code=415, detail=str(exc))
         except UploadValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
@@ -92,6 +101,8 @@ def create_thumbnail(image_id: str, payload: schemas.CreateThumbnailRequest, ser
         raise HTTPException(status_code=404, detail="image not found")
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="original file missing")
+    except DuplicateThumbnailError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
     return out
 

@@ -1,32 +1,6 @@
 import io
 
-import mongomock
-import pytest
-from fastapi.testclient import TestClient
 from PIL import Image
-
-import app.main as main_module
-from app.database.mongodb import mongodb
-
-
-@pytest.fixture
-def client(monkeypatch, tmp_path):
-    def fake_connect():
-        mongodb.client = mongomock.MongoClient()
-        mongodb.db = mongodb.client["test_db"]
-
-    monkeypatch.setattr(mongodb, "connect", fake_connect)
-    monkeypatch.setattr(mongodb, "create_indexes", lambda: None)
-    monkeypatch.setattr(mongodb, "close", lambda: None)
-
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path / "storage"))
-    monkeypatch.setattr(settings, "DB_FILE", str(tmp_path / "db.json"))
-    monkeypatch.setattr(settings, "THUMBNAILS_DIR", str(tmp_path / "thumbnails"))
-
-    with TestClient(main_module.app) as test_client:
-        yield test_client
 
 
 def _jpeg_bytes() -> bytes:
@@ -72,7 +46,7 @@ def test_upload_oversized_file_rejected(client, monkeypatch):
         files={"files": ("photo.jpg", _jpeg_bytes(), "image/jpeg")},
     )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 413
     assert "maximum" in resp.json()["detail"]
 
 
@@ -82,7 +56,7 @@ def test_upload_disallowed_content_type_rejected(client):
         files={"files": ("photo.gif", b"GIF89a" + b"\x00" * 20, "image/gif")},
     )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 415
 
 
 def test_upload_signature_mismatch_rejected(client):
@@ -91,7 +65,7 @@ def test_upload_signature_mismatch_rejected(client):
         files={"files": ("photo.png", _jpeg_bytes(), "image/png")},
     )
 
-    assert resp.status_code == 400
+    assert resp.status_code == 415
     assert "does not match declared content type" in resp.json()["detail"]
 
 

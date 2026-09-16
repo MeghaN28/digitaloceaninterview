@@ -1,23 +1,4 @@
-import mongomock
-import pytest
-from fastapi.testclient import TestClient
-
-import app.main as main_module
 from app.database.mongodb import mongodb
-
-
-@pytest.fixture
-def client(monkeypatch):
-    def fake_connect():
-        mongodb.client = mongomock.MongoClient()
-        mongodb.db = mongodb.client["test_db"]
-
-    monkeypatch.setattr(mongodb, "connect", fake_connect)
-    monkeypatch.setattr(mongodb, "create_indexes", lambda: None)
-    monkeypatch.setattr(mongodb, "close", lambda: None)
-
-    with TestClient(main_module.app) as test_client:
-        yield test_client
 
 
 def test_healthz(client):

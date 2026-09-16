@@ -6,6 +6,10 @@ from pathlib import Path
 from .base import ImageRecord, ImageRepository
 
 
+class DuplicateThumbnailError(Exception):
+    """Raised when a preset thumbnail already exists for an image. -> HTTP 409"""
+
+
 class LocalImageRepository:
     """JSON-file-backed repository.
 
@@ -57,12 +61,24 @@ class LocalImageRepository:
         return db.get(image_id)
 
     def add_thumbnail(self, image_id: str, thumbnail_record: dict) -> None:
+        # Checked and appended inside the same locked section as the
+        # read-modify-write cycle (not as a separate pre-check) so two
+        # concurrent requests for the same (image_id, preset) can't both
+        # pass the check and both append - the same class of race already
+        # fixed for save_image/get_image above.
         with self._lock:
             db = self._read_db_locked()
             rec = db.get(image_id)
             if not rec:
                 raise KeyError("image not found")
             rec.setdefault("thumbnails", [])
+
+            preset = thumbnail_record.get("preset")
+            if preset is not None and any(t.get("preset") == preset for t in rec["thumbnails"]):
+                raise DuplicateThumbnailError(
+                    f"a '{preset}' thumbnail already exists for image {image_id}"
+                )
+
             rec["thumbnails"].append(thumbnail_record)
             db[image_id] = rec
             self._write_db_locked(db)

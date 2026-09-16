@@ -9,6 +9,7 @@ from uuid import uuid4
 from PIL import Image
 
 from app.core.config import settings
+from app.repositories.local_repository import DuplicateThumbnailError
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,13 @@ class ThumbnailService:
         rec = self.repo.get_image(image_id)
         if not rec:
             raise KeyError("image not found")
+
+        # Fast pre-check to skip the resize work for the common case; the
+        # authoritative check is the atomic one inside repo.add_thumbnail,
+        # since a concurrent request could create the same preset between
+        # this check and the write below.
+        if preset is not None and any(t.get("preset") == preset for t in rec.get("thumbnails", [])):
+            raise DuplicateThumbnailError(f"a '{preset}' thumbnail already exists for image {image_id}")
 
         orig_path = self.storage_dir / f"{image_id}"
         if not orig_path.exists():
@@ -67,7 +75,11 @@ class ThumbnailService:
             "created_at": datetime.utcnow().isoformat() + "Z",
         }
 
-        self.repo.add_thumbnail(image_id, thumb_record)
+        try:
+            self.repo.add_thumbnail(image_id, thumb_record)
+        except DuplicateThumbnailError:
+            thumb_path.unlink(missing_ok=True)
+            raise
 
         logger.info("Created thumbnail %s for image %s", thumb_id, image_id)
 

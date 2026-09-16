@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     MONGO_MAX_POOL_SIZE: int = 50
     MONGO_MIN_POOL_SIZE: int = 0
 
+    RATE_LIMIT_MAX_REQUESTS: int = 100
+    RATE_LIMIT_WINDOW_SECONDS: int = 60
+
     class Config:
         env_file = ".env"
 
