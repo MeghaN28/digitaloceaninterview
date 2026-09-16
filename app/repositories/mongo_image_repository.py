@@ -29,6 +29,7 @@ class MongoImageRepository:
         height: Optional[int] = None,
         size_bytes: Optional[int] = None,
         created_at: Optional[str] = None,
+        content_hash: Optional[str] = None,
     ) -> dict:
         doc = {
             "image_id": image_id,
@@ -39,6 +40,7 @@ class MongoImageRepository:
             "height": height,
             "size_bytes": size_bytes,
             "created_at": created_at or datetime.utcnow().isoformat() + "Z",
+            "content_hash": content_hash,
         }
         with timed(db_metrics, "mongo_repo.create_image"):
             mongodb.images.insert_one(dict(doc))
@@ -48,10 +50,14 @@ class MongoImageRepository:
         with timed(db_metrics, "mongo_repo.find_image"):
             return mongodb.images.find_one({"image_id": image_id}, {"_id": 0})
 
+    def find_by_content_hash(self, content_hash: str) -> Optional[dict]:
+        with timed(db_metrics, "mongo_repo.find_by_content_hash"):
+            return mongodb.images.find_one({"content_hash": content_hash}, {"_id": 0})
+
     # --- interface expected by app/api/controllers.py (same shape as
     # LocalImageRepository) so the two repositories are interchangeable ---
 
-    def save_image(self, image_id: str, filename: str, content_type: str, width: int, height: int, size_bytes: int, created_at: str) -> None:
+    def save_image(self, image_id: str, filename: str, content_type: str, width: int, height: int, size_bytes: int, created_at: str, content_hash: Optional[str] = None) -> None:
         self.create_image(
             image_id=image_id,
             original_filename=filename,
@@ -60,6 +66,7 @@ class MongoImageRepository:
             height=height,
             size_bytes=size_bytes,
             created_at=created_at,
+            content_hash=content_hash,
         )
 
     def get_image(self, image_id: str) -> Optional[dict]:

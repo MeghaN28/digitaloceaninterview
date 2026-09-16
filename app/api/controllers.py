@@ -1,7 +1,9 @@
+import hashlib
 import logging
 from datetime import datetime
 from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
+from pymongo.errors import DuplicateKeyError
 from typing import List
 from uuid import uuid4
 
@@ -54,6 +56,15 @@ async def upload_images(files: List[UploadFile] = File(...), repo: MongoImageRep
         except UploadValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+        # Content-addressed dedup: identical bytes (any filename) map to the
+        # same image_id instead of creating a new document/file every time.
+        content_hash = hashlib.sha256(content).hexdigest()
+        existing = repo.find_by_content_hash(content_hash)
+        if existing is not None:
+            images.append({"image_id": existing["image_id"]})
+            logger.info("Duplicate content for upload %s, reusing image %s", upload.filename, existing["image_id"])
+            continue
+
         image_id = uuid4().hex
         filename = f"{image_id}"
         storage_dir = settings.STORAGE_DIR
@@ -78,7 +89,18 @@ async def upload_images(files: List[UploadFile] = File(...), repo: MongoImageRep
         size_bytes = len(content)
         created_at = datetime.utcnow().isoformat() + "Z"
 
-        repo.save_image(image_id, upload.filename, upload.content_type, width, height, size_bytes, created_at)
+        try:
+            repo.save_image(image_id, upload.filename, upload.content_type, width, height, size_bytes, created_at, content_hash=content_hash)
+        except DuplicateKeyError:
+            # Lost the race: another concurrent upload with the same content
+            # committed first. The unique index is the authoritative guard;
+            # the find_by_content_hash check above is just the fast path.
+            path.unlink(missing_ok=True)
+            existing = repo.find_by_content_hash(content_hash)
+            images.append({"image_id": existing["image_id"]})
+            logger.info("Duplicate content for upload %s (race), reusing image %s", upload.filename, existing["image_id"])
+            continue
+
         images.append({"image_id": image_id})
         logger.info("Saved image %s (%s bytes)", image_id, size_bytes)
 

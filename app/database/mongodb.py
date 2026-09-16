@@ -59,6 +59,16 @@ class MongoDB:
 
     def create_indexes(self) -> None:
         self.images.create_index([("image_id", ASCENDING)], unique=True, name="uniq_image_id")
+        # Content-hash dedup: two uploads of byte-identical content collide
+        # here and the second is treated as a repeat of the first (same
+        # image_id returned) instead of creating a duplicate document.
+        # Partial so it never applies to any legacy doc without the field.
+        self.images.create_index(
+            [("content_hash", ASCENDING)],
+            unique=True,
+            name="uniq_content_hash",
+            partialFilterExpression={"content_hash": {"$type": "string"}},
+        )
 
         self.thumbnails.create_index([("image_id", ASCENDING)], name="image_id_idx")
         # Unique per (image_id, preset) only when preset is an actual string.

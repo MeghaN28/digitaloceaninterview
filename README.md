@@ -46,7 +46,14 @@ shutdown -> mongodb.close()
 
 ### Collections & indexes
 
-- `images`: one document per uploaded image. Unique index on `image_id`.
+- `images`: one document per uploaded image. Unique index on `image_id`, plus
+  a partial unique index on `content_hash` (SHA-256 of the file bytes,
+  `partialFilterExpression: {"content_hash": {"$type": "string"}}`) - two
+  uploads of byte-identical content (any filename) resolve to the same
+  `image_id` instead of creating a duplicate document. The upload handler
+  checks this first for the fast path, and also catches `DuplicateKeyError`
+  from the index itself as the authoritative guard for a genuine race
+  between two concurrent uploads of the same content.
 - `thumbnails`: one document per generated thumbnail.
   - Index on `image_id` (list all thumbnails for an image).
   - Unique compound index on `(image_id, preset)`, but scoped with a
