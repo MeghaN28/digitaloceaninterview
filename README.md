@@ -111,6 +111,28 @@ db.close()
   MONGODB_URI="..." MONGODB_DATABASE="image_thumbnail_db" pytest -m integration
   ```
 
+## Concurrency
+
+`LocalImageRepository` uses a single process-wide lock guarding the entire
+read-modify-write cycle of every operation, so concurrent requests can't
+corrupt `data/db.json` or silently drop each other's writes (see
+[app/repositories/local_repository.py](app/repositories/local_repository.py)).
+This was verified with a unit test that reproduces the corruption against the
+pre-fix code, and with a live load test against the deployed app:
+
+- **20 concurrent** upload + thumbnail + read cycles: 0 failures, consistent
+  data, ~4s total.
+- **50 concurrent** (30 worker threads): the app fell over under load
+  (request timeouts, DO edge `504`s) but recovered immediately afterward with
+  no data corruption and no restart. This is a throughput/capacity ceiling on
+  the current small App Platform instance, not a correctness bug - the global
+  lock serializes *all* repository operations (not just conflicting ones),
+  and thumbnail generation does real CPU work (Pillow decode/resize/encode)
+  synchronously. If this needs to scale past ~20-30 concurrent requests,
+  the next steps would be: a bigger/multi-instance App Platform plan, a
+  per-image lock instead of one global lock, and/or moving thumbnail
+  generation off the request thread.
+
 ## Error responses
 
 | Status | When | Source |
